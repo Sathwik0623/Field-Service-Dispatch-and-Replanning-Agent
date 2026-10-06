@@ -1,8 +1,8 @@
 services:
   # 1. Backend Web Service (Docker Container)
   - type: web
+    runtime: docker
     name: field-service-backend
-    env: docker
     dockerfilePath: ./backend/Dockerfile
     healthCheckPath: /health
     envVars:
@@ -24,7 +24,8 @@ services:
         sync: false
 
   # 2. Frontend Static Site (React + Vite)
-  - type: static
+  - type: web
+    runtime: static
     name: field-service-frontend
     buildCommand: cd frontend && npm install && npm run build
     staticPublishPath: ./frontend/dist
