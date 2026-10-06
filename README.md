@@ -45,7 +45,7 @@ Field Service Dispatch and Replanning Agent/
 │   │   ├── config.ts         # Environment API URL configuration
 │   │   └── types.ts          # TypeScript interfaces
 │   └── package.json          # Node dependencies & scripts
-├── tests/                    # Backend Pytest Test Suite (29 tests)
+├── tests/                    # Backend Pytest Test Suite (31 tests)
 │   ├── test_ai_planning.py   # AI planning, validation, mock provider, approval, replanning tests
 │   ├── test_assignment_engine.py
 │   ├── test_scheduling_engine.py
@@ -123,7 +123,7 @@ The AI planning agent utilizes a structured proposal pipeline:
 
 ### 3. Verification Commands
 
-- **Backend Pytest Suite (29 tests)**:
+- **Backend Pytest Suite (31 tests)**:
   ```powershell
   $env:PYTHONPATH="backend"
   .\backend\.venv\Scripts\pytest.exe tests
@@ -136,18 +136,19 @@ The AI planning agent utilizes a structured proposal pipeline:
 
 ---
 
-## Deployment & Production Setup
+## Deployment & Production Setup (Render)
 
 ### 1. Deployment Architecture
 
-- **Frontend**: React + TypeScript + Vite built static bundle (`dist/`), hosted via static web server (Vercel, Netlify, Nginx).
-- **Backend**: FastAPI modular monolith running via Uvicorn containerized process (`backend/Dockerfile`).
-- **Database**: PostgreSQL (Production) / SQLite (Local Development fallback).
-- **AI Integration**: Backend-only integration via `OPENAI_API_KEY` with automatic fallback to `MockAIProvider`.
+- **Frontend Static Site**: React + TypeScript + Vite static site (`frontend/dist`), deployed on Render Static Site with `VITE_API_BASE_URL` set to the backend API URL.
+- **Backend Web Service**: FastAPI modular monolith deployed as a Docker Web Service on Render (`backend/Dockerfile`), listening on `0.0.0.0:${PORT}` with health check endpoint `/health`.
+- **Database**: Render Managed PostgreSQL Database (`postgresql://<user>:<password>@<host>:5432/<database>`).
+- **Blueprint Spec**: `render.yaml` infrastructure-as-code specification provided at project root for automated 1-click Blueprint deployment on Render.
+- **AI Integration**: Backend-only integration via `OPENAI_API_KEY` with automatic fallback to zero-dependency `MockAIProvider` when unconfigured.
 
 ### 2. Docker Compose Deployment (Local Production Verification)
 
-To spin up the complete containerized stack (PostgreSQL database + FastAPI backend service):
+To spin up the local containerized stack (PostgreSQL database + FastAPI backend service):
 
 ```powershell
 docker-compose up --build -d
@@ -155,7 +156,7 @@ docker-compose up --build -d
 
 Database migrations run via:
 ```powershell
-docker-compose exec backend alembic upgrade head
+docker-compose exec backend alembic -c backend/alembic.ini upgrade head
 ```
 
 Optional demo seed data creation:
@@ -163,19 +164,19 @@ Optional demo seed data creation:
 docker-compose exec backend python -m app.db.seed
 ```
 
-### 3. Production Environment Variables
+### 3. Production Environment Variables (Render)
 
-Configure the following environment variables in `.env` or provider settings:
+Configure the following environment variables in Render Dashboard or `.env`:
 
 ```env
 APP_ENV=production
 DEBUG=False
-DATABASE_URL=postgresql://field_ops:field_ops_password@postgres:5432/field_service_db
-CORS_ORIGINS=["https://your-frontend-domain.com","http://localhost:5173"]
-VITE_API_BASE_URL=https://your-backend-api-domain.com
+DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<database>
+CORS_ORIGINS=["https://your-frontend-site.onrender.com","http://localhost:5173"]
+VITE_API_BASE_URL=https://your-backend-service.onrender.com
 LLM_PROVIDER=openai
 LLM_MODEL=gpt-4o-mini
-OPENAI_API_KEY=sk-...
+OPENAI_API_KEY=your_openai_api_key_here
 ```
 
 ---
