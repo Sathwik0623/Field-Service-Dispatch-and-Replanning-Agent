@@ -42,8 +42,9 @@ class Settings(BaseSettings):
         return v
 
     # AI / LLM Integration placeholders (Phase 3)
-    LLM_PROVIDER: str = "openai"
-    LLM_MODEL: str = "gpt-4o"
+    LLM_PROVIDER: str = "gemini"
+    LLM_MODEL: str = "gemini-2.5-flash"
+    GEMINI_API_KEY: Union[str, None] = None
     OPENAI_API_KEY: Union[str, None] = None
 
     model_config = SettingsConfigDict(

@@ -144,7 +144,7 @@ The AI planning agent utilizes a structured proposal pipeline:
 - **Backend Web Service**: FastAPI modular monolith deployed as a Docker Web Service on Render (`backend/Dockerfile`), listening on `0.0.0.0:${PORT}` with health check endpoint `/health`.
 - **Database**: Render Managed PostgreSQL Database (`postgresql://<user>:<password>@<host>:5432/<database>`).
 - **Blueprint Spec**: `render.yaml` infrastructure-as-code specification provided at project root for automated 1-click Blueprint deployment on Render.
-- **AI Integration**: Backend-only integration via `OPENAI_API_KEY` with automatic fallback to zero-dependency `MockAIProvider` when unconfigured.
+- **AI Integration**: Backend-only integration via Google Gemini (`GEMINI_API_KEY`) with automatic fallback to zero-dependency `MockAIProvider` when unconfigured or on failure.
 
 ### 2. Docker Compose Deployment (Local Production Verification)
 
@@ -174,9 +174,9 @@ DEBUG=False
 DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<database>
 CORS_ORIGINS=["https://your-frontend-site.onrender.com","http://localhost:5173"]
 VITE_API_BASE_URL=https://your-backend-service.onrender.com
-LLM_PROVIDER=openai
-LLM_MODEL=gpt-4o-mini
-OPENAI_API_KEY=your_openai_api_key_here
+LLM_PROVIDER=gemini
+LLM_MODEL=gemini-2.5-flash
+GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
 ---

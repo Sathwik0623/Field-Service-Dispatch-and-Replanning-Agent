@@ -12,8 +12,9 @@ from app.domain.models import (
     AuditLog,
 )
 from app.services.assignment_engine import AssignmentEngine
+from app.core.config import settings
 from app.ai.prompts import SYSTEM_PROMPT, build_llm_context_prompt
-from app.ai.provider import OpenAIProvider, MockAIProvider
+from app.ai.provider import GeminiProvider, OpenAIProvider, MockAIProvider
 from app.ai.validator import AIProposalValidator
 from app.ai.schemas import AIPlanningProposal, AIValidationResult, AIObservabilityMetadata
 
@@ -98,8 +99,12 @@ class AIPlanningAgent:
             current_schedule_version=base_schedule_version_id or "1",
         )
 
-        # 5. Invoke Provider (OpenAI or Mock)
-        provider = OpenAIProvider()
+        # 5. Invoke Provider (Gemini, OpenAI or Mock fallback)
+        provider_name = (settings.LLM_PROVIDER or "gemini").lower()
+        if provider_name == "openai":
+            provider = OpenAIProvider()
+        else:
+            provider = GeminiProvider()
         proposal, observability = provider.generate_proposal(
             system_prompt=SYSTEM_PROMPT,
             user_context=user_context,

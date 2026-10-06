@@ -30,6 +30,96 @@ class BaseAIProvider(ABC):
         pass
 
 
+class GeminiProvider(BaseAIProvider):
+    """
+    Google Gemini Provider integration using structured JSON output via google-genai SDK.
+    Falls back gracefully to MockAIProvider if key is missing or API call fails.
+    """
+
+    def generate_proposal(
+        self,
+        system_prompt: str,
+        user_context: str,
+        requests: List[Dict[str, Any]],
+        technicians: List[Dict[str, Any]],
+        deterministic_evaluations: Dict[str, Any],
+    ) -> Tuple[AIPlanningProposal, AIObservabilityMetadata]:
+        start_time = time.time()
+
+        # Normalize GEMINI_API_KEY if present (strip quotes and whitespace)
+        raw_key = settings.GEMINI_API_KEY
+        api_key = raw_key.strip().strip('"').strip("'") if raw_key else ""
+
+        # If no real API key is set, delegate to MockAIProvider safely
+        if not api_key or api_key.startswith("your_"):
+            mock_p = MockAIProvider()
+            return mock_p.generate_proposal(
+                system_prompt, user_context, requests, technicians, deterministic_evaluations
+            )
+
+        try:
+            from google import genai
+            from google.genai import types
+
+            client = genai.Client(api_key=api_key)
+            model_name = settings.LLM_MODEL or "gemini-2.5-flash"
+
+            response = client.models.generate_content(
+                model=model_name,
+                contents=user_context,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=0.2,
+                    response_mime_type="application/json",
+                ),
+            )
+
+            latency_ms = round((time.time() - start_time) * 1000, 2)
+
+            raw_text = response.text or ""
+            parsed = json.loads(raw_text)
+
+            proposal = AIPlanningProposal(
+                proposal_id=str(uuid.uuid4()),
+                assignments=[AIProposedAssignment(**a) for a in parsed.get("assignments", [])],
+                unassigned_requests=parsed.get("unassigned_requests", []),
+                risks=[RiskFactor(**r) for r in parsed.get("risks", [])],
+                clarification_questions=[ClarificationQuestion(**q) for q in parsed.get("clarification_questions", [])],
+                tradeoffs=[TradeoffAnalysis(**t) for t in parsed.get("tradeoffs", [])],
+                reasoning_summary=parsed.get("reasoning_summary", "Gemini schedule optimization generated successfully."),
+                is_mock=False,
+            )
+
+            prompt_tokens = None
+            completion_tokens = None
+            if hasattr(response, "usage_metadata") and response.usage_metadata:
+                prompt_tokens = getattr(response.usage_metadata, "prompt_token_count", None)
+                completion_tokens = getattr(response.usage_metadata, "candidates_token_count", None)
+
+            obs = AIObservabilityMetadata(
+                provider="gemini",
+                model_name=model_name,
+                latency_ms=latency_ms,
+                proposed_count=len(proposal.assignments),
+                validated_count=0,
+                rejected_count=0,
+                is_mock=False,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+            return proposal, obs
+
+        except Exception as exc:
+            safe_err = str(exc)[:300]
+            print(f"[AI Provider Error] Gemini API error: {safe_err}")
+
+        # Fallback to Mock Provider if API call or parsing fails
+        mock_p = MockAIProvider()
+        return mock_p.generate_proposal(
+            system_prompt, user_context, requests, technicians, deterministic_evaluations
+        )
+
+
 class OpenAIProvider(BaseAIProvider):
     """
     OpenAI Provider integration using structured outputs.

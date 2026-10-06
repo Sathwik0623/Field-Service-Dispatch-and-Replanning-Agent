@@ -26,6 +26,9 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_db():
+    from app.core.config import settings
+    settings.GEMINI_API_KEY = None
+    settings.OPENAI_API_KEY = None
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)

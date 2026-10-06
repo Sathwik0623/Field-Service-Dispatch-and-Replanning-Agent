@@ -344,3 +344,150 @@ def test_openai_provider_malformed_200_response(monkeypatch, capsys):
     assert proposal.is_mock is True
     captured = capsys.readouterr()
     assert "[AI Provider Error] Falling back to Mock Provider" in captured.out
+
+
+def test_gemini_provider_missing_or_placeholder_key(monkeypatch):
+    from app.core.config import settings
+    from app.ai.provider import GeminiProvider
+
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", ' "your_gemini_api_key_here" ')
+    provider = GeminiProvider()
+
+    reqs = [{"id": "req_101", "customer_name": "Acme", "region": "NORTH_ZONE", "required_skills": ["HVAC"], "min_expertise": 3}]
+    techs = [{"id": "tech_ravi", "name": "Ravi", "region": "NORTH_ZONE", "skills": ["HVAC"], "skill_expertise": {"HVAC": 4}}]
+    evals = {"req_101": {"eligible_candidates": [{"technician_id": "tech_ravi", "technician_name": "Ravi", "score": 90.0, "distance_km": 1.2}]}}
+
+    proposal, obs = provider.generate_proposal("sys", "usr", reqs, techs, evals)
+    assert proposal.is_mock is True
+    assert obs.is_mock is True
+
+
+def test_gemini_provider_successful_response(monkeypatch):
+    import json
+    import google.genai
+    from app.core.config import settings
+    from app.ai.provider import GeminiProvider
+
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", ' "AIzaSy-valid-gemini-key" ')
+    monkeypatch.setattr(settings, "LLM_MODEL", "gemini-2.5-flash")
+
+    class MockUsage:
+        prompt_token_count = 120
+        candidates_token_count = 60
+
+    class MockGeminiResponse:
+        text = json.dumps({
+            "assignments": [
+                {
+                    "service_request_id": "req_101",
+                    "technician_id": "tech_ravi",
+                    "proposed_start": "09:00",
+                    "proposed_end": "11:00",
+                    "rationale": "Top score tech",
+                    "confidence": 0.95,
+                    "relevant_factors": ["Proximity"],
+                }
+            ],
+            "unassigned_requests": [],
+            "risks": [],
+            "clarification_questions": [],
+            "tradeoffs": [],
+            "reasoning_summary": "Gemini dispatch proposal",
+        })
+        usage_metadata = MockUsage()
+
+    class MockModels:
+        def generate_content(self, model, contents, config):
+            assert model == "gemini-2.5-flash"
+            assert config.response_mime_type == "application/json"
+            return MockGeminiResponse()
+
+    class MockGenAIClient:
+        def __init__(self, api_key):
+            assert api_key == "AIzaSy-valid-gemini-key"
+            self.models = MockModels()
+
+    monkeypatch.setattr(google.genai, "Client", MockGenAIClient)
+
+    provider = GeminiProvider()
+    reqs = [{"id": "req_101", "customer_name": "Acme", "region": "NORTH_ZONE", "required_skills": ["HVAC"], "min_expertise": 3}]
+    techs = [{"id": "tech_ravi", "name": "Ravi", "region": "NORTH_ZONE", "skills": ["HVAC"], "skill_expertise": {"HVAC": 4}}]
+    evals = {"req_101": {"eligible_candidates": [{"technician_id": "tech_ravi", "technician_name": "Ravi", "score": 90.0, "distance_km": 1.2}]}}
+
+    proposal, obs = provider.generate_proposal("sys", "usr", reqs, techs, evals)
+    assert proposal.is_mock is False
+    assert obs.is_mock is False
+    assert obs.provider == "gemini"
+    assert obs.model_name == "gemini-2.5-flash"
+    assert obs.prompt_tokens == 120
+    assert obs.completion_tokens == 60
+
+
+def test_gemini_provider_api_failure(monkeypatch, capsys):
+    import google.genai
+    from app.core.config import settings
+    from app.ai.provider import GeminiProvider
+
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "AIzaSy-valid-gemini-key")
+
+    class MockGenAIClient:
+        def __init__(self, api_key):
+            raise Exception("API quota exceeded or invalid key")
+
+    monkeypatch.setattr(google.genai, "Client", MockGenAIClient)
+
+    provider = GeminiProvider()
+    reqs = [{"id": "req_101", "customer_name": "Acme", "region": "NORTH_ZONE", "required_skills": ["HVAC"], "min_expertise": 3}]
+    techs = [{"id": "tech_ravi", "name": "Ravi", "region": "NORTH_ZONE", "skills": ["HVAC"], "skill_expertise": {"HVAC": 4}}]
+    evals = {"req_101": {"eligible_candidates": [{"technician_id": "tech_ravi", "technician_name": "Ravi", "score": 90.0, "distance_km": 1.2}]}}
+
+    proposal, obs = provider.generate_proposal("sys", "usr", reqs, techs, evals)
+    assert proposal.is_mock is True
+    captured = capsys.readouterr()
+    assert "[AI Provider Error] Gemini API error: API quota exceeded" in captured.out
+
+
+def test_gemini_provider_malformed_json_response(monkeypatch, capsys):
+    import google.genai
+    from app.core.config import settings
+    from app.ai.provider import GeminiProvider
+
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "AIzaSy-valid-gemini-key")
+
+    class MockGeminiResponse:
+        text = "{bad json string"
+        usage_metadata = None
+
+    class MockModels:
+        def generate_content(self, model, contents, config):
+            return MockGeminiResponse()
+
+    class MockGenAIClient:
+        def __init__(self, api_key):
+            self.models = MockModels()
+
+    monkeypatch.setattr(google.genai, "Client", MockGenAIClient)
+
+    provider = GeminiProvider()
+    reqs = [{"id": "req_101", "customer_name": "Acme", "region": "NORTH_ZONE", "required_skills": ["HVAC"], "min_expertise": 3}]
+    techs = [{"id": "tech_ravi", "name": "Ravi", "region": "NORTH_ZONE", "skills": ["HVAC"], "skill_expertise": {"HVAC": 4}}]
+    evals = {"req_101": {"eligible_candidates": [{"technician_id": "tech_ravi", "technician_name": "Ravi", "score": 90.0, "distance_km": 1.2}]}}
+
+    proposal, obs = provider.generate_proposal("sys", "usr", reqs, techs, evals)
+    assert proposal.is_mock is True
+    captured = capsys.readouterr()
+    assert "[AI Provider Error] Gemini API error" in captured.out
+
+
+def test_ai_agent_provider_selection_gemini(db_session, monkeypatch):
+    from app.core.config import settings
+    from app.db.seed import seed_database
+
+    seed_database(db_session)
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "gemini")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", None)
+
+    result = AIPlanningAgent.generate_plan(db=db_session)
+    assert "proposal" in result
+    assert "observability" in result
+    assert result["observability"]["is_mock"] is True
