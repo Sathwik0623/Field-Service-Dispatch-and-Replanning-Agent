@@ -31,10 +31,7 @@ services:
     staticPublishPath: ./frontend/dist
     envVars:
       - key: VITE_API_BASE_URL
-        fromService:
-          type: web
-          name: field-service-backend
-          property: url
+        sync: false
 
 databases:
   # 3. Render Managed PostgreSQL Database
