@@ -491,3 +491,138 @@ def test_ai_agent_provider_selection_gemini(db_session, monkeypatch):
     assert "proposal" in result
     assert "observability" in result
     assert result["observability"]["is_mock"] is True
+
+
+def test_gemini_provider_regression_malformed_risk_factor_string(monkeypatch):
+    import json
+    import google.genai
+    from app.core.config import settings
+    from app.ai.provider import GeminiProvider
+
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "AIzaSy-valid-gemini-key")
+    monkeypatch.setattr(settings, "LLM_MODEL", "gemini-2.5-flash")
+
+    # String risk factors instead of dict objects (previously caused app.ai.schemas.RiskFactor() argument after ** must be a mapping, not str)
+    malformed_json_response = {
+        "assignments": [
+            {
+                "service_request_id": "req_101",
+                "technician_id": "tech_ravi",
+                "proposed_start": "09:00",
+                "proposed_end": "11:00",
+                "rationale": "Assigned top candidate",
+                "confidence": 0.9,
+                "relevant_factors": ["Skill"],
+            }
+        ],
+        "unassigned_requests": ["req_102"],
+        "risks": [
+            "Request req_102 unassigned due to missing certification in region"
+        ],
+        "clarification_questions": [],
+        "tradeoffs": [],
+        "reasoning_summary": "Handled malformed risk string safely",
+    }
+
+    class MockGeminiResponse:
+        text = json.dumps(malformed_json_response)
+        usage_metadata = None
+
+    class MockModels:
+        def generate_content(self, model, contents, config):
+            return MockGeminiResponse()
+
+    class MockGenAIClient:
+        def __init__(self, api_key):
+            self.models = MockModels()
+
+    monkeypatch.setattr(google.genai, "Client", MockGenAIClient)
+
+    provider = GeminiProvider()
+    reqs = [{"id": "req_101", "customer_name": "Acme", "region": "NORTH_ZONE", "required_skills": ["HVAC"], "min_expertise": 3}]
+    techs = [{"id": "tech_ravi", "name": "Ravi", "region": "NORTH_ZONE", "skills": ["HVAC"], "skill_expertise": {"HVAC": 4}}]
+    evals = {"req_101": {"eligible_candidates": [{"technician_id": "tech_ravi", "technician_name": "Ravi", "score": 90.0, "distance_km": 1.2}]}}
+
+    proposal, obs = provider.generate_proposal("sys", "usr", reqs, techs, evals)
+    assert proposal.is_mock is False
+    assert len(proposal.risks) == 1
+    assert proposal.risks[0].description == "Request req_102 unassigned due to missing certification in region"
+    assert proposal.risks[0].category == "General Risk"
+
+
+def test_gemini_provider_production_schema_fixture(monkeypatch):
+    import json
+    import google.genai
+    from app.core.config import settings
+    from app.ai.provider import GeminiProvider
+
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "AIzaSy-valid-gemini-key")
+    monkeypatch.setattr(settings, "LLM_MODEL", "gemini-2.5-flash")
+
+    prod_schema_json = {
+        "assignments": [
+            {
+                "service_request_id": "req_101",
+                "technician_id": "tech_ravi",
+                "proposed_start": "09:00",
+                "proposed_end": "11:00",
+                "rationale": "Selected Ravi Kumar with top composite score 92.5.",
+                "confidence": 0.95,
+                "relevant_factors": ["Skill Expertise", "Geographical Proximity"],
+            }
+        ],
+        "unassigned_requests": ["req_102"],
+        "risks": [
+            {
+                "category": "Unassigned Ticket Risk",
+                "description": "Request req_102 could not be assigned.",
+                "severity": "HIGH",
+                "affected_requests": ["req_102"],
+            }
+        ],
+        "clarification_questions": [
+            {
+                "id": "q_req_102",
+                "question": "Can req_102 be rescheduled?",
+                "context": "Requires HVAC level 4 in NORTH_ZONE",
+                "target_entity": "req_102",
+            }
+        ],
+        "tradeoffs": [
+            {
+                "factor": "Proximity Balance",
+                "decision_taken": "Assigned tech_ravi to req_101",
+                "tradeoff_explanation": "Accepted 3.2km distance to ensure HVAC 4 expertise",
+            }
+        ],
+        "reasoning_summary": "Optimal dispatch generated via Gemini 2.5 Flash.",
+    }
+
+    class MockGeminiResponse:
+        text = json.dumps(prod_schema_json)
+        usage_metadata = None
+
+    class MockModels:
+        def generate_content(self, model, contents, config):
+            assert config.response_schema is not None
+            return MockGeminiResponse()
+
+    class MockGenAIClient:
+        def __init__(self, api_key):
+            self.models = MockModels()
+
+    monkeypatch.setattr(google.genai, "Client", MockGenAIClient)
+
+    provider = GeminiProvider()
+    reqs = [{"id": "req_101", "customer_name": "Acme", "region": "NORTH_ZONE", "required_skills": ["HVAC"], "min_expertise": 3}]
+    techs = [{"id": "tech_ravi", "name": "Ravi", "region": "NORTH_ZONE", "skills": ["HVAC"], "skill_expertise": {"HVAC": 4}}]
+    evals = {"req_101": {"eligible_candidates": [{"technician_id": "tech_ravi", "technician_name": "Ravi", "score": 90.0, "distance_km": 1.2}]}}
+
+    proposal, obs = provider.generate_proposal("sys", "usr", reqs, techs, evals)
+    assert proposal.is_mock is False
+    assert len(proposal.assignments) == 1
+    assert len(proposal.risks) == 1
+    assert proposal.risks[0].category == "Unassigned Ticket Risk"
+    assert proposal.risks[0].affected_requests == ["req_102"]
+    assert len(proposal.clarification_questions) == 1
+    assert len(proposal.tradeoffs) == 1

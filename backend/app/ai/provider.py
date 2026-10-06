@@ -3,6 +3,7 @@ import json
 import uuid
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional, Tuple
+from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.ai.schemas import (
@@ -28,6 +29,15 @@ class BaseAIProvider(ABC):
         deterministic_evaluations: Dict[str, Any],
     ) -> Tuple[AIPlanningProposal, AIObservabilityMetadata]:
         pass
+
+
+class AIProposalResponseSchema(BaseModel):
+    assignments: List[AIProposedAssignment] = Field(default_factory=list)
+    unassigned_requests: List[str] = Field(default_factory=list)
+    risks: List[RiskFactor] = Field(default_factory=list)
+    clarification_questions: List[ClarificationQuestion] = Field(default_factory=list)
+    tradeoffs: List[TradeoffAnalysis] = Field(default_factory=list)
+    reasoning_summary: str = ""
 
 
 class GeminiProvider(BaseAIProvider):
@@ -71,6 +81,7 @@ class GeminiProvider(BaseAIProvider):
                     system_instruction=system_prompt,
                     temperature=0.2,
                     response_mime_type="application/json",
+                    response_schema=AIProposalResponseSchema,
                 ),
             )
 
@@ -79,13 +90,28 @@ class GeminiProvider(BaseAIProvider):
             raw_text = response.text or ""
             parsed = json.loads(raw_text)
 
+            # Defensive parsing for risks in case string items are returned
+            parsed_risks = []
+            for r in parsed.get("risks", []):
+                if isinstance(r, dict):
+                    parsed_risks.append(RiskFactor(**r))
+                elif isinstance(r, str):
+                    parsed_risks.append(
+                        RiskFactor(
+                            category="General Risk",
+                            description=r,
+                            severity="MEDIUM",
+                            affected_requests=[],
+                        )
+                    )
+
             proposal = AIPlanningProposal(
                 proposal_id=str(uuid.uuid4()),
-                assignments=[AIProposedAssignment(**a) for a in parsed.get("assignments", [])],
+                assignments=[AIProposedAssignment(**a) for a in parsed.get("assignments", []) if isinstance(a, dict)],
                 unassigned_requests=parsed.get("unassigned_requests", []),
-                risks=[RiskFactor(**r) for r in parsed.get("risks", [])],
-                clarification_questions=[ClarificationQuestion(**q) for q in parsed.get("clarification_questions", [])],
-                tradeoffs=[TradeoffAnalysis(**t) for t in parsed.get("tradeoffs", [])],
+                risks=parsed_risks,
+                clarification_questions=[ClarificationQuestion(**q) for q in parsed.get("clarification_questions", []) if isinstance(q, dict)],
+                tradeoffs=[TradeoffAnalysis(**t) for t in parsed.get("tradeoffs", []) if isinstance(t, dict)],
                 reasoning_summary=parsed.get("reasoning_summary", "Gemini schedule optimization generated successfully."),
                 is_mock=False,
             )
