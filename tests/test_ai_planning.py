@@ -207,3 +207,140 @@ def test_change_explanation_generator():
     assert diff["changed_assignments"][0]["before_technician_id"] == "tech_ravi"
     assert diff["changed_assignments"][0]["after_technician_id"] == "tech_priya"
     assert "req_102" in diff["unchanged_request_ids"]
+
+
+def test_openai_provider_missing_or_placeholder_key(monkeypatch):
+    from app.core.config import settings
+    from app.ai.provider import OpenAIProvider
+
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", ' "your_openai_api_key_here" ')
+    provider = OpenAIProvider()
+
+    reqs = [{"id": "req_101", "customer_name": "Acme", "region": "NORTH_ZONE", "required_skills": ["HVAC"], "min_expertise": 3}]
+    techs = [{"id": "tech_ravi", "name": "Ravi", "region": "NORTH_ZONE", "skills": ["HVAC"], "skill_expertise": {"HVAC": 4}}]
+    evals = {"req_101": {"eligible_candidates": [{"technician_id": "tech_ravi", "technician_name": "Ravi", "score": 90.0, "distance_km": 1.2}]}}
+
+    proposal, obs = provider.generate_proposal("sys", "usr", reqs, techs, evals)
+    assert proposal.is_mock is True
+    assert obs.is_mock is True
+
+
+def test_openai_provider_successful_200_response(monkeypatch):
+    import json
+    from app.core.config import settings
+    from app.ai.provider import OpenAIProvider
+    import httpx
+
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", ' "sk-valid-test-key" ')
+    monkeypatch.setattr(settings, "LLM_MODEL", "gpt-4o-mini")
+
+    captured_headers = {}
+
+    def mock_post(url, headers=None, json=None, timeout=None, **kwargs):
+        nonlocal captured_headers
+        captured_headers = headers or {}
+        mock_response_json = {
+            "choices": [
+                {
+                    "message": {
+                        "content": json_mod.dumps({
+                            "assignments": [
+                                {
+                                    "service_request_id": "req_101",
+                                    "technician_id": "tech_ravi",
+                                    "proposed_start": "09:00",
+                                    "proposed_end": "11:00",
+                                    "rationale": "Top score tech",
+                                    "confidence": 0.95,
+                                    "relevant_factors": ["Proximity"],
+                                }
+                            ],
+                            "unassigned_requests": [],
+                            "risks": [],
+                            "clarification_questions": [],
+                            "tradeoffs": [],
+                            "reasoning_summary": "Optimal dispatch",
+                        })
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+        }
+
+        class MockResponse:
+            status_code = 200
+            text = json_mod.dumps(mock_response_json)
+            def json(self):
+                return mock_response_json
+
+        return MockResponse()
+
+    import json as json_mod
+    monkeypatch.setattr(httpx, "post", mock_post)
+
+    provider = OpenAIProvider()
+    reqs = [{"id": "req_101", "customer_name": "Acme", "region": "NORTH_ZONE", "required_skills": ["HVAC"], "min_expertise": 3}]
+    techs = [{"id": "tech_ravi", "name": "Ravi", "region": "NORTH_ZONE", "skills": ["HVAC"], "skill_expertise": {"HVAC": 4}}]
+    evals = {"req_101": {"eligible_candidates": [{"technician_id": "tech_ravi", "technician_name": "Ravi", "score": 90.0, "distance_km": 1.2}]}}
+
+    proposal, obs = provider.generate_proposal("sys", "usr", reqs, techs, evals)
+    assert proposal.is_mock is False
+    assert obs.is_mock is False
+    assert obs.provider == "openai"
+    assert obs.model_name == "gpt-4o-mini"
+    assert captured_headers.get("Authorization") == "Bearer sk-valid-test-key"
+
+
+def test_openai_provider_non_200_response(monkeypatch, capsys):
+    from app.core.config import settings
+    from app.ai.provider import OpenAIProvider
+    import httpx
+
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-valid-test-key")
+
+    def mock_post(url, headers=None, json=None, timeout=None, **kwargs):
+        class MockResponse:
+            status_code = 401
+            text = '{"error": {"message": "Incorrect API key provided"}}'
+        return MockResponse()
+
+    monkeypatch.setattr(httpx, "post", mock_post)
+
+    provider = OpenAIProvider()
+    reqs = [{"id": "req_101", "customer_name": "Acme", "region": "NORTH_ZONE", "required_skills": ["HVAC"], "min_expertise": 3}]
+    techs = [{"id": "tech_ravi", "name": "Ravi", "region": "NORTH_ZONE", "skills": ["HVAC"], "skill_expertise": {"HVAC": 4}}]
+    evals = {"req_101": {"eligible_candidates": [{"technician_id": "tech_ravi", "technician_name": "Ravi", "score": 90.0, "distance_km": 1.2}]}}
+
+    proposal, obs = provider.generate_proposal("sys", "usr", reqs, techs, evals)
+    assert proposal.is_mock is True
+    captured = capsys.readouterr()
+    assert "[AI Provider Error] OpenAI HTTP status 401" in captured.out
+    assert "Incorrect API key provided" in captured.out
+
+
+def test_openai_provider_malformed_200_response(monkeypatch, capsys):
+    from app.core.config import settings
+    from app.ai.provider import OpenAIProvider
+    import httpx
+
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-valid-test-key")
+
+    def mock_post(url, headers=None, json=None, timeout=None, **kwargs):
+        class MockResponse:
+            status_code = 200
+            text = '{malformed json'
+            def json(self):
+                raise ValueError("JSON decode error")
+        return MockResponse()
+
+    monkeypatch.setattr(httpx, "post", mock_post)
+
+    provider = OpenAIProvider()
+    reqs = [{"id": "req_101", "customer_name": "Acme", "region": "NORTH_ZONE", "required_skills": ["HVAC"], "min_expertise": 3}]
+    techs = [{"id": "tech_ravi", "name": "Ravi", "region": "NORTH_ZONE", "skills": ["HVAC"], "skill_expertise": {"HVAC": 4}}]
+    evals = {"req_101": {"eligible_candidates": [{"technician_id": "tech_ravi", "technician_name": "Ravi", "score": 90.0, "distance_km": 1.2}]}}
+
+    proposal, obs = provider.generate_proposal("sys", "usr", reqs, techs, evals)
+    assert proposal.is_mock is True
+    captured = capsys.readouterr()
+    assert "[AI Provider Error] Falling back to Mock Provider" in captured.out

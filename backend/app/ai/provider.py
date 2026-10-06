@@ -45,8 +45,13 @@ class OpenAIProvider(BaseAIProvider):
         deterministic_evaluations: Dict[str, Any],
     ) -> Tuple[AIPlanningProposal, AIObservabilityMetadata]:
         start_time = time.time()
+
+        # Normalize OPENAI_API_KEY if present (strip quotes and whitespace)
+        raw_key = settings.OPENAI_API_KEY
+        api_key = raw_key.strip().strip('"').strip("'") if raw_key else ""
+
         # If no real API key is set, delegate to MockAIProvider safely
-        if not settings.OPENAI_API_KEY or settings.OPENAI_API_KEY.startswith("your_"):
+        if not api_key or api_key.startswith("your_"):
             mock_p = MockAIProvider()
             return mock_p.generate_proposal(
                 system_prompt, user_context, requests, technicians, deterministic_evaluations
@@ -56,7 +61,7 @@ class OpenAIProvider(BaseAIProvider):
             import httpx
 
             headers = {
-                "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
+                "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             }
             payload = {
@@ -107,6 +112,9 @@ class OpenAIProvider(BaseAIProvider):
                     completion_tokens=usage.get("completion_tokens"),
                 )
                 return proposal, obs
+            else:
+                safe_body = response.text[:300] if response.text else ""
+                print(f"[AI Provider Error] OpenAI HTTP status {response.status_code}: {safe_body}")
 
         except Exception as exc:
             print(f"[AI Provider Error] Falling back to Mock Provider: {str(exc)}")
@@ -145,7 +153,7 @@ class MockAIProvider(BaseAIProvider):
         tech_time_slots: Dict[str, int] = {}
 
         for req in requests:
-            req_id = req.get("id")
+            req_id = str(req.get("id", ""))
             eval_res = deterministic_evaluations.get(req_id, {})
             eligible = eval_res.get("eligible_candidates", [])
 
